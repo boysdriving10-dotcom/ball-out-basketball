@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Ball Out Basketball",
+    "slug": "ball-out-basketball",
+    "version": "1.0.1",
+    "orientation": "portrait",
+    "icon": "./assets/icon-1024.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/icon-1024.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.runit.basketball",
+      "buildNumber": "2",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "We use your location to show nearby basketball courts.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "We use your location to help you find and join games near you."
+      }
+    },
+    "web": {
+      "favicon": "./assets/icon-1024.png"
+    },
+    "extra": {
+      "eas": {
+        "owner": "king_swole",
+        "projectId": "4a93ff05-65be-4867-baa8-6d83987b90d5"
+      }
+    }
+  }
+}
