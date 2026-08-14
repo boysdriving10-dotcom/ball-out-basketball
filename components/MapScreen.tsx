@@ -1,120 +1,268 @@
 
-import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, ScrollView, Dimensions, Platform, Linking } from 'react-native';
-import { WebView } from 'react-native-webview';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  View,
+  StyleSheet,
+  TouchableOpacity,
+  Text,
+  ScrollView,
+  Platform,
+  Linking,
+  ActivityIndicator,
+} from 'react-native';
+import MapView, { Marker, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
+import CourtService, { Court, MapBounds } from '@/services/CourtService';
 
-type Court = {
-  id: string;
-  name: string;
-  latitude: number;
-  longitude: number;
-  address: string;
-  rating: number;
-  activeGames: number;
+const DEFAULT_REGION: Region = {
+  latitude: 40.7128,
+  longitude: -74.006,
+  latitudeDelta: 0.08,
+  longitudeDelta: 0.08,
 };
 
-const MOCK_COURTS: Court[] = [
-  { id: '1', name: 'Central Park Basketball Court', latitude: 40.785091, longitude: -73.968285, address: '1000 5th Ave, New York, NY', rating: 4.5, activeGames: 3 },
-  { id: '2', name: 'Brooklyn Bridge Park Court', latitude: 40.700292, longitude: -73.996453, address: '334 Furman St, Brooklyn, NY', rating: 4.2, activeGames: 2 },
-  { id: '3', name: 'The Cage at West 4th', latitude: 40.731233, longitude: -74.002754, address: 'W 4th St, New York, NY', rating: 4.8, activeGames: 5 },
-  { id: '4', name: "Wilton's Corner Court", latitude: 39.75339849692943, longitude: -74.97046005749134, address: 'Wilton Ave, Philadelphia, PA', rating: 4.0, activeGames: 1 },
-  { id: '5', name: 'Mayapple Rd Court', latitude: 39.74309024523072, longitude: -75.01724368502401, address: 'Mayapple Rd, Philadelphia, PA', rating: 3.8, activeGames: 0 },
-];
+const DEBOUNCE_MS = 400;
 
-const { width, height } = Dimensions.get('window');
+function regionToBounds(region: Region): MapBounds {
+  return {
+    south: region.latitude - region.latitudeDelta / 2,
+    north: region.latitude + region.latitudeDelta / 2,
+    west: region.longitude - region.longitudeDelta / 2,
+    east: region.longitude + region.longitudeDelta / 2,
+  };
+}
 
 export default function MapScreen() {
-  const [userLocation, setUserLocation] = useState<{latitude: number, longitude: number} | null>(null);
+  const mapRef = useRef<MapView>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestBoundsRef = useRef<string>('');
+
+  const [region, setRegion] = useState<Region>(DEFAULT_REGION);
+  const [courts, setCourts] = useState<Court[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [locationDenied, setLocationDenied] = useState(false);
+
+  const loadCourtsForRegion = useCallback(async (nextRegion: Region) => {
+    const bounds = regionToBounds(nextRegion);
+    const boundsKey = `${bounds.south},${bounds.west},${bounds.north},${bounds.east}`;
+
+    if (boundsKey === latestBoundsRef.current) {
+      return;
+    }
+    latestBoundsRef.current = boundsKey;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const results = await CourtService.fetchCourtsForBounds(bounds);
+      setCourts(results);
+    } catch (fetchError) {
+      const message =
+        fetchError instanceof Error
+          ? fetchError.message
+          : 'Unable to load courts right now.';
+      setError(message);
+      setCourts([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const scheduleCourtFetch = useCallback(
+    (nextRegion: Region) => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+
+      debounceRef.current = setTimeout(() => {
+        loadCourtsForRegion(nextRegion);
+      }, DEBOUNCE_MS);
+    },
+    [loadCourtsForRegion]
+  );
 
   const centerOnUser = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        console.log('Location permission denied');
+        setLocationDenied(true);
+        latestBoundsRef.current = '';
+        loadCourtsForRegion(DEFAULT_REGION);
         return;
       }
-      
-      const location = await Location.getCurrentPositionAsync({});
-      setUserLocation({
+
+      setLocationDenied(false);
+
+      const location = await Promise.race([
+        Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Location request timed out')), 10000)
+        ),
+      ]);
+
+      const nextRegion: Region = {
         latitude: location.coords.latitude,
-        longitude: location.coords.longitude
-      });
-    } catch (error) {
-      console.log('Error getting location:', error);
+        longitude: location.coords.longitude,
+        latitudeDelta: 0.05,
+        longitudeDelta: 0.05,
+      };
+
+      mapRef.current?.animateToRegion(nextRegion, 500);
+      setRegion(nextRegion);
+      latestBoundsRef.current = '';
+      loadCourtsForRegion(nextRegion);
+    } catch (locationError) {
+      console.log('Error getting location:', locationError);
+      setLocationDenied(true);
+      latestBoundsRef.current = '';
+      loadCourtsForRegion(region);
     }
   };
 
   useEffect(() => {
     centerOnUser();
+
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
   }, []);
 
-  const getMapUrl = () => {
-    const center = userLocation ? 
-      `${userLocation.latitude},${userLocation.longitude}` : 
-      '40.7128,-74.0060'; // Default to NYC
-    
-    if (Platform.OS === 'ios') {
-      // Use Apple Maps for iOS
-      const [lat, lng] = center.split(',');
-      return `https://maps.apple.com/?ll=${lat},${lng}&z=12&t=m`;
-    } else {
-      // Use Google Maps for other platforms
-      const markers = MOCK_COURTS.map(court => 
-        `markers=color:red%7Clabel:${court.id}%7C${court.latitude},${court.longitude}`
-      ).join('&');
+  const handleRegionChangeComplete = (nextRegion: Region) => {
+    setRegion(nextRegion);
+    scheduleCourtFetch(nextRegion);
+  };
 
-      return `https://www.google.com/maps/embed/v1/view?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dO4YCVfNAcP-4Q&center=${center}&zoom=12&${markers}`;
-    }
+  const retryFetch = () => {
+    latestBoundsRef.current = '';
+    loadCourtsForRegion(region);
   };
 
   const openInNativeMap = (court: Court) => {
+    const label = CourtService.getCourtLocationLabel(court);
+
     if (Platform.OS === 'ios') {
-      // Open in Apple Maps
-      const url = `http://maps.apple.com/?q=${encodeURIComponent(court.name)}&ll=${court.latitude},${court.longitude}`;
+      const url = `http://maps.apple.com/?q=${encodeURIComponent(label)}&ll=${court.latitude},${court.longitude}`;
       Linking.openURL(url);
     } else {
-      // Open in Google Maps
       const url = `https://www.google.com/maps/search/?api=1&query=${court.latitude},${court.longitude}`;
       Linking.openURL(url);
     }
   };
 
+  const renderCourtListContent = () => {
+    if (loading && courts.length === 0) {
+      return (
+        <View style={styles.stateContainer}>
+          <ActivityIndicator color="#FF6B35" />
+          <Text style={styles.stateText}>Searching for courts...</Text>
+        </View>
+      );
+    }
+
+    if (error && courts.length === 0) {
+      return (
+        <View style={styles.stateContainer}>
+          <Text style={styles.stateText}>{error}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={retryFetch}>
+            <Text style={styles.retryButtonText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    if (!loading && !error && courts.length === 0) {
+      return (
+        <View style={styles.stateContainer}>
+          <Text style={styles.stateText}>
+            No basketball courts found in this area. Try moving the map or tapping 📍 to recenter.
+          </Text>
+        </View>
+      );
+    }
+
+    return courts.map((court) => (
+      <TouchableOpacity
+        key={court.id}
+        style={styles.courtItem}
+        onPress={() => openInNativeMap(court)}
+      >
+        <Text style={styles.courtName}>{court.name}</Text>
+        <Text style={styles.courtAddress}>{court.address}</Text>
+        {(court.rating != null || court.activeGames != null) && (
+          <View style={styles.courtStats}>
+            {court.rating != null && (
+              <Text style={styles.rating}>⭐ {court.rating}</Text>
+            )}
+            {court.activeGames != null && (
+              <Text style={styles.activeGames}>
+                🏀 {court.activeGames} active games
+              </Text>
+            )}
+          </View>
+        )}
+        <Text style={styles.tapToOpen}>
+          {Platform.OS === 'ios'
+            ? '📍 Tap to open in Apple Maps'
+            : '📍 Tap to open in Google Maps'}
+        </Text>
+      </TouchableOpacity>
+    ));
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.mapContainer}>
-        <WebView
-          source={{ uri: getMapUrl() }}
-          style={styles.webview}
-          allowsFullscreenVideo={false}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-        />
-        
+        <MapView
+          ref={mapRef}
+          style={styles.map}
+          initialRegion={DEFAULT_REGION}
+          onRegionChangeComplete={handleRegionChangeComplete}
+          showsUserLocation
+          showsMyLocationButton={false}
+        >
+          {courts.map((court) => (
+            <Marker
+              key={court.id}
+              coordinate={{
+                latitude: court.latitude,
+                longitude: court.longitude,
+              }}
+              title={court.name}
+              description={court.address}
+              pinColor="#FF6B35"
+            />
+          ))}
+        </MapView>
+
+        {loading && courts.length > 0 && (
+          <View style={styles.loadingBanner}>
+            <ActivityIndicator color="#fff" size="small" />
+            <Text style={styles.loadingBannerText}>Updating courts...</Text>
+          </View>
+        )}
+
+        {locationDenied && (
+          <View style={styles.locationBanner}>
+            <Text style={styles.locationBannerText}>
+              Location access is off. Showing default map area.
+            </Text>
+          </View>
+        )}
+
         <TouchableOpacity style={styles.locationButton} onPress={centerOnUser}>
           <Text style={styles.locationButtonText}>📍</Text>
         </TouchableOpacity>
       </View>
-      
+
       <ScrollView style={styles.courtsList} showsVerticalScrollIndicator={false}>
         <Text style={styles.courtsTitle}>🏀 Nearby Courts</Text>
-        {MOCK_COURTS.map(court => (
-          <TouchableOpacity 
-            key={court.id} 
-            style={styles.courtItem}
-            onPress={() => openInNativeMap(court)}
-          >
-            <Text style={styles.courtName}>{court.name}</Text>
-            <Text style={styles.courtAddress}>{court.address}</Text>
-            <View style={styles.courtStats}>
-              <Text style={styles.rating}>⭐ {court.rating}</Text>
-              <Text style={styles.activeGames}>🏀 {court.activeGames} active games</Text>
-            </View>
-            <Text style={styles.tapToOpen}>
-              {Platform.OS === 'ios' ? '📍 Tap to open in Apple Maps' : '📍 Tap to open in Google Maps'}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {renderCourtListContent()}
       </ScrollView>
     </View>
   );
@@ -129,8 +277,39 @@ const styles = StyleSheet.create({
     flex: 1,
     position: 'relative',
   },
-  webview: {
+  map: {
     flex: 1,
+  },
+  loadingBanner: {
+    position: 'absolute',
+    top: 50,
+    left: 20,
+    right: 80,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  loadingBannerText: {
+    color: '#fff',
+    marginLeft: 8,
+    fontSize: 13,
+  },
+  locationBanner: {
+    position: 'absolute',
+    top: 50,
+    left: 20,
+    right: 80,
+    backgroundColor: 'rgba(255, 107, 53, 0.9)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  locationBannerText: {
+    color: '#fff',
+    fontSize: 12,
   },
   locationButton: {
     position: 'absolute',
@@ -163,6 +342,29 @@ const styles = StyleSheet.create({
     color: '#FF6B35',
     marginBottom: 15,
     textAlign: 'center',
+  },
+  stateContainer: {
+    alignItems: 'center',
+    paddingVertical: 20,
+    paddingHorizontal: 10,
+  },
+  stateText: {
+    color: '#ccc',
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginTop: 8,
+  },
+  retryButton: {
+    marginTop: 12,
+    backgroundColor: '#FF6B35',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontWeight: '600',
   },
   courtItem: {
     backgroundColor: '#2a2a2a',
