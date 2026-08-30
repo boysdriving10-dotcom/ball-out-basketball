@@ -13,6 +13,7 @@ import {
 import MapView, { Marker, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 import CourtService, { Court, MapBounds } from '@/services/CourtService';
+import CourtAddressText from '@/components/CourtAddressText';
 
 const DEFAULT_REGION: Region = {
   latitude: 40.7128,
@@ -193,7 +194,7 @@ export default function MapScreen() {
         onPress={() => openInNativeMap(court)}
       >
         <Text style={styles.courtName}>{court.name}</Text>
-        <Text style={styles.courtAddress}>{court.address}</Text>
+        <CourtAddressText court={court} />
         {(court.rating != null || court.activeGames != null) && (
           <View style={styles.courtStats}>
             {court.rating != null && (
@@ -234,7 +235,6 @@ export default function MapScreen() {
                 longitude: court.longitude,
               }}
               title={court.name}
-              description={court.address}
               pinColor="#FF6B35"
             />
           ))}
@@ -379,11 +379,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#fff',
     marginBottom: 5,
-  },
-  courtAddress: {
-    fontSize: 14,
-    color: '#ccc',
-    marginBottom: 8,
   },
   courtStats: {
     flexDirection: 'row',
