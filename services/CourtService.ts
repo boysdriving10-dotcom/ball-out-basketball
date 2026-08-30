@@ -3,7 +3,8 @@ export interface Court {
   name: string;
   latitude: number;
   longitude: number;
-  address: string;
+  /** Readable OSM address when tags exist; otherwise omitted for presentation-layer geocoding. */
+  address?: string;
   rating?: number;
   activeGames?: number;
 }
@@ -226,25 +227,32 @@ class CourtService {
 
   private getCourtAddress(
     tags: Record<string, string> | undefined,
-    latitude: number,
-    longitude: number
-  ): string {
+    _latitude: number,
+    _longitude: number
+  ): string | undefined {
     if (!tags) {
-      return `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+      return undefined;
     }
 
-    const parts = [
-      tags['addr:housenumber'],
-      tags['addr:street'],
-      tags['addr:city'],
-      tags['addr:state'],
-    ].filter(Boolean);
+    const streetLine = [tags['addr:housenumber'], tags['addr:street']]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    const locality = [tags['addr:city'], tags['addr:state']]
+      .filter(Boolean)
+      .join(', ');
 
-    if (parts.length > 0) {
-      return parts.join(' ');
+    if (streetLine && locality) {
+      return `${streetLine}, ${locality}`;
+    }
+    if (streetLine) {
+      return streetLine;
+    }
+    if (locality) {
+      return locality;
     }
 
-    return `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+    return undefined;
   }
 
   private limitCourts(courts: Court[], bounds: MapBounds): Court[] {
