@@ -1,27 +1,37 @@
-
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { ScrollView, StyleSheet, Text } from 'react-native';
+import SafetyService from '@/services/SafetyService';
 
 export default function Terms() {
   return (
     <ScrollView style={styles.container}>
-      <Text style={styles.title}>Terms of Service - Run it Basketball</Text>
+      <Text style={styles.title}>Terms of Service</Text>
       <Text style={styles.content}>
-        Last updated: {new Date().toDateString()}
-        
-        {'\n\n'}Welcome to Run it Basketball. By using our app, you agree to these terms.
-        
-        {'\n\n'}Acceptable Use:
-        - Use the app to find and organize basketball games
-        - Be respectful to other users
-        - Provide accurate information
-        
-        {'\n\n'}Prohibited Activities:
-        - Harassment or inappropriate behavior
-        - Spam or promotional content
-        - Misuse of location features
-        
-        {'\n\n'}Contact Us:
-        Questions about these terms? Contact: support@runitbasketball.com
+        Last updated: August 1, 2026
+        {'\n\n'}
+        Welcome to BallOut. By using the app, you agree to these terms.
+        {'\n\n'}
+        Acceptable Use:
+        {'\n'}- Use BallOut to find courts, organize games, and connect with players
+        {'\n'}- Be respectful in messages, profiles, reviews, and game posts
+        {'\n'}- Provide accurate account information
+        {'\n\n'}
+        Prohibited Activities:
+        {'\n'}- Harassment, hate speech, threats, or bullying
+        {'\n'}- Spam, scams, or impersonation
+        {'\n'}- Posting illegal, sexual, or violent content
+        {'\n'}- Misusing location features or attempting to disrupt the service
+        {'\n\n'}
+        User Content:
+        {'\n'}
+        You are responsible for content you create. BallOut may remove content or disable accounts that violate these terms. Other users may report and block abusive behavior.
+        {'\n\n'}
+        Accounts:
+        {'\n'}
+        You can delete your account at any time from Profile → Delete Account.
+        {'\n\n'}
+        Contact:
+        {'\n'}
+        Questions about these terms? Contact {SafetyService.getSupportEmail()}.
       </Text>
     </ScrollView>
   );

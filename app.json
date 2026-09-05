@@ -16,9 +16,23 @@
       "bundleIdentifier": "com.runit.basketball",
       "buildNumber": "2",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "We use your location to show nearby basketball courts.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "We use your location to help you find and join games near you."
+        "NSLocationWhenInUseUsageDescription": "BallOut uses your location to show nearby basketball courts and games around you.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "BallOut can use your location to help you find and get notified about nearby pickup games.",
+        "NSCameraUsageDescription": "BallOut needs camera access so you can take a profile photo or add highlight videos.",
+        "NSPhotoLibraryUsageDescription": "BallOut needs photo library access so you can choose a profile photo or upload highlights.",
+        "NSMicrophoneUsageDescription": "BallOut needs microphone access when you record highlight videos with sound.",
+        "NSPhotoLibraryAddUsageDescription": "BallOut may save media to your library when you choose to keep a copy."
       }
+    },
+    "android": {
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "POST_NOTIFICATIONS"
+      ]
     },
     "web": {
       "favicon": "./assets/icon-1024.png"

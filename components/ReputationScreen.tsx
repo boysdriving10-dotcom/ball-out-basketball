@@ -14,6 +14,7 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useReputation } from '@/contexts/ReputationContext';
 import { useAuth } from '@/contexts/AuthContext';
+import ReportModal from '@/components/ReportModal';
 
 const { width } = Dimensions.get('window');
 
@@ -199,6 +200,11 @@ export default function ReputationScreen() {
   const [loading, setLoading] = useState(true);
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [reviewModalVisible, setReviewModalVisible] = useState(false);
+  const [reportTarget, setReportTarget] = useState<{
+    type: 'user' | 'review';
+    id: string;
+    label: string;
+  } | null>(null);
 
   useEffect(() => {
     loadReputations();
@@ -263,6 +269,20 @@ export default function ReputationScreen() {
           </ThemedText>
         </ThemedView>
       </ThemedView>
+
+      <TouchableOpacity
+        style={styles.reportLink}
+        onPress={(e) => {
+          e.stopPropagation?.();
+          setReportTarget({
+            type: 'user',
+            id: reputation.userId,
+            label: `Player #${reputation.userId.slice(-6)}`,
+          });
+        }}
+      >
+        <ThemedText style={styles.reportLinkText}>Report Player</ThemedText>
+      </TouchableOpacity>
     </TouchableOpacity>
   );
 
@@ -357,14 +377,13 @@ export default function ReputationScreen() {
         </Modal>
       )}
 
-      {/* Demo Review Modal */}
-      <ReviewModal
-        visible={reviewModalVisible}
-        onClose={() => setReviewModalVisible(false)}
-        reviewedUserId="demo-user"
-        reviewedUserName="Demo Player"
-        gameId="demo-game"
-        onSubmit={loadReputations}
+      {/* Report modal for users/reviews */}
+      <ReportModal
+        visible={!!reportTarget}
+        onClose={() => setReportTarget(null)}
+        targetType={reportTarget?.type || 'user'}
+        targetId={reportTarget?.id || ''}
+        targetLabel={reportTarget?.label || ''}
       />
     </ThemedView>
   );
@@ -463,6 +482,15 @@ const styles = StyleSheet.create({
   categoryChipText: {
     fontSize: 11,
     color: '#4A90E2',
+    fontWeight: '600',
+  },
+  reportLink: {
+    marginTop: 12,
+    alignSelf: 'flex-end',
+  },
+  reportLinkText: {
+    color: '#FF8A65',
+    fontSize: 12,
     fontWeight: '600',
   },
   emptyState: {

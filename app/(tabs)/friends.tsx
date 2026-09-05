@@ -13,6 +13,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useAuth } from '@/contexts/AuthContext';
+import ReportModal from '@/components/ReportModal';
+import SafetyService from '@/services/SafetyService';
 
 const { width } = Dimensions.get('window');
 
@@ -47,6 +49,7 @@ export default function FriendsScreen() {
   const [friends, setFriends] = useState<User[]>([]);
   const [friendRequests, setFriendRequests] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [reportTarget, setReportTarget] = useState<{ id: string; label: string } | null>(null);
 
   useEffect(() => {
     loadData();
@@ -59,12 +62,18 @@ export default function FriendsScreen() {
       setAllUsers(users);
 
       if (user) {
-        // Load friends
-        const userFriends = users.filter(u => user.friends.includes(u.id));
+        const hiddenIds = await SafetyService.getHiddenUserIds(user.id);
+
+        // Load friends (exclude blocked)
+        const userFriends = users.filter(
+          (u) => user.friends.includes(u.id) && !hiddenIds.includes(u.id)
+        );
         setFriends(userFriends);
 
-        // Load friend requests
-        const requests = users.filter(u => user.friendRequests.includes(u.id));
+        // Load friend requests (exclude blocked)
+        const requests = users.filter(
+          (u) => user.friendRequests.includes(u.id) && !hiddenIds.includes(u.id)
+        );
         setFriendRequests(requests);
       }
     } catch (error) {
@@ -72,6 +81,30 @@ export default function FriendsScreen() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleBlockUser = (target: User) => {
+    if (!user) return;
+    Alert.alert(
+      'Block user',
+      `Block @${target.username}? They will not be able to find you or send friend requests.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: async () => {
+            await SafetyService.blockUser(user.id, target.id, target.username);
+            // Also remove friendship if present
+            if (user.friends.includes(target.id)) {
+              await removeFriend(target.id);
+            }
+            Alert.alert('User blocked', `@${target.username} has been blocked.`);
+            loadData();
+          },
+        },
+      ]
+    );
   };
 
   const handleSearch = async (query: string) => {
@@ -216,6 +249,26 @@ export default function FriendsScreen() {
           </ThemedView>
         )}
       </ThemedView>
+
+      <ThemedView style={styles.safetyActions}>
+        <TouchableOpacity
+          style={styles.safetyButton}
+          onPress={() =>
+            setReportTarget({
+              id: userData.id,
+              label: `@${userData.username}`,
+            })
+          }
+        >
+          <ThemedText style={styles.safetyButtonText}>Report</ThemedText>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.safetyButton}
+          onPress={() => handleBlockUser(userData)}
+        >
+          <ThemedText style={styles.safetyButtonText}>Block</ThemedText>
+        </TouchableOpacity>
+      </ThemedView>
     </ThemedView>
   );
 
@@ -335,13 +388,21 @@ export default function FriendsScreen() {
                 <ThemedText style={styles.emptyEmoji}>🔎</ThemedText>
                 <ThemedText style={styles.emptyTitle}>Search for Players</ThemedText>
                 <ThemedText style={styles.emptyText}>
-                  Enter a username, name, or email to find basketball players.
+                  Enter a username or name to find basketball players.
                 </ThemedText>
               </ThemedView>
             )}
           </ThemedView>
         )}
       </ScrollView>
+
+      <ReportModal
+        visible={!!reportTarget}
+        onClose={() => setReportTarget(null)}
+        targetType="user"
+        targetId={reportTarget?.id || ''}
+        targetLabel={reportTarget?.label || ''}
+      />
     </ThemedView>
   );
 }
@@ -589,5 +650,23 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
     paddingHorizontal: 32,
+  },
+  safetyActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginTop: 10,
+    width: '100%',
+  },
+  safetyButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  safetyButtonText: {
+    color: '#FF8A65',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

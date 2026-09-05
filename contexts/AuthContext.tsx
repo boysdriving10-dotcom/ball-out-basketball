@@ -2,8 +2,10 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
+import SafetyService from '@/services/SafetyService';
+import GameService from '@/services/GameService';
 
-interface User {
+export interface User {
   id: string;
   username: string;
   email: string;
@@ -28,6 +30,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<boolean>;
   register: (userData: RegisterData) => Promise<boolean>;
   logout: () => Promise<void>;
+  deleteAccount: () => Promise<boolean>;
   updateProfile: (userData: Partial<User>) => Promise<void>;
   sendFriendRequest: (userId: string) => Promise<boolean>;
   acceptFriendRequest: (userId: string) => Promise<boolean>;
@@ -167,6 +170,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       );
 
       if (user) {
+        if (await SafetyService.isUserDisabled(user.id)) {
+          console.log('Login failed: account disabled');
+          return false;
+        }
+
         // Remove password from user object before setting state
         const { password: _, ...userWithoutPassword } = user as any;
         setUser(userWithoutPassword);
@@ -189,6 +197,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await AsyncStorage.removeItem(CURRENT_USER_KEY);
     } catch (error) {
       console.error('Logout error:', error);
+    }
+  };
+
+  const deleteAccount = async (): Promise<boolean> => {
+    if (!user) return false;
+
+    try {
+      const userId = user.id;
+      const users = await getUsers();
+
+      // Remove this account and scrub friend graph references to it.
+      const remainingUsers = users
+        .filter((u) => u.id !== userId)
+        .map((u) => ({
+          ...u,
+          friends: (u.friends || []).filter((id) => id !== userId),
+          friendRequests: (u.friendRequests || []).filter((id) => id !== userId),
+          sentFriendRequests: (u.sentFriendRequests || []).filter((id) => id !== userId),
+        }));
+
+      await saveUsers(remainingUsers);
+
+      // Remove reviews written by or about this user.
+      try {
+        const reviewsRaw = await AsyncStorage.getItem('basketball_app_reviews');
+        if (reviewsRaw) {
+          const reviews = JSON.parse(reviewsRaw).filter(
+            (r: { reviewerId: string; reviewedUserId: string }) =>
+              r.reviewerId !== userId && r.reviewedUserId !== userId
+          );
+          await AsyncStorage.setItem('basketball_app_reviews', JSON.stringify(reviews));
+        }
+      } catch (reviewError) {
+        console.error('Error cleaning reviews during account deletion:', reviewError);
+      }
+
+      await GameService.purgeUserGames(userId);
+      await SafetyService.purgeUserData(userId);
+
+      setUser(null);
+      await AsyncStorage.removeItem(CURRENT_USER_KEY);
+      return true;
+    } catch (error) {
+      console.error('Delete account error:', error);
+      return false;
     }
   };
 
@@ -216,6 +269,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!user || userId === user.id) return false;
 
     try {
+      if (await SafetyService.isBlockedEitherWay(user.id, userId)) {
+        return false;
+      }
+      if (await SafetyService.isUserDisabled(userId)) {
+        return false;
+      }
+
       const users = await getUsers();
       const targetUser = users.find(u => u.id === userId);
       const currentUserIndex = users.findIndex(u => u.id === user.id);
@@ -345,23 +405,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const toPublicUser = (u: any): User => {
+    const { password, ...userWithoutPassword } = u;
+    // Do not expose email to other users in search / friend lists.
+    return {
+      ...userWithoutPassword,
+      email: '',
+    } as User;
+  };
+
   const searchUsers = async (query: string): Promise<User[]> => {
     try {
       const users = await getUsers();
       const lowercaseQuery = query.toLowerCase();
+      const hiddenIds = user
+        ? await SafetyService.getHiddenUserIds(user.id)
+        : [];
+      const disabledIds = await SafetyService.getDisabledUserIds();
+
       return users
-        .filter(u => 
-          u.id !== user?.id && (
-            u.username.toLowerCase().includes(lowercaseQuery) ||
-            u.firstName.toLowerCase().includes(lowercaseQuery) ||
-            u.lastName.toLowerCase().includes(lowercaseQuery) ||
-            u.email.toLowerCase().includes(lowercaseQuery)
-          )
+        .filter(
+          (u) =>
+            u.id !== user?.id &&
+            !hiddenIds.includes(u.id) &&
+            !disabledIds.includes(u.id) &&
+            (u.username.toLowerCase().includes(lowercaseQuery) ||
+              u.firstName.toLowerCase().includes(lowercaseQuery) ||
+              u.lastName.toLowerCase().includes(lowercaseQuery))
         )
-        .map(u => {
-          const { password, ...userWithoutPassword } = u as any;
-          return userWithoutPassword;
-        });
+        .map(toPublicUser);
     } catch (error) {
       console.error('Search users error:', error);
       return [];
@@ -371,12 +443,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const getAllUsers = async (): Promise<User[]> => {
     try {
       const users = await getUsers();
+      const hiddenIds = user
+        ? await SafetyService.getHiddenUserIds(user.id)
+        : [];
+      const disabledIds = await SafetyService.getDisabledUserIds();
+
       return users
-        .filter(u => u.id !== user?.id)
-        .map(u => {
-          const { password, ...userWithoutPassword } = u as any;
-          return userWithoutPassword;
-        });
+        .filter(
+          (u) =>
+            u.id !== user?.id &&
+            !hiddenIds.includes(u.id) &&
+            !disabledIds.includes(u.id)
+        )
+        .map(toPublicUser);
     } catch (error) {
       console.error('Get all users error:', error);
       return [];
@@ -390,6 +469,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       register,
       logout,
+      deleteAccount,
       updateProfile,
       sendFriendRequest,
       acceptFriendRequest,

@@ -1,575 +1,430 @@
-
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, View, FlatList, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import {
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  Alert,
+  View,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
+import { useAuth } from '@/contexts/AuthContext';
+import ReportModal from '@/components/ReportModal';
+import SafetyService from '@/services/SafetyService';
 
-// Mock data for demonstration
-const initialChats = [
-  {
-    id: '1',
-    name: 'Basketball Warriors',
-    type: 'group',
-    lastMessage: 'Game tomorrow at 6 PM!',
-    lastMessageTime: '2:30 PM',
-    members: 8,
-    unreadCount: 3
-  },
-  {
-    id: '2',
-    name: 'Mike Johnson',
-    type: 'direct',
-    lastMessage: 'Are you coming to the game?',
-    lastMessageTime: '1:45 PM',
-    unreadCount: 1
-  },
-  {
-    id: '3',
-    name: 'Downtown Ballers',
-    type: 'group',
-    lastMessage: 'Looking for 2 more players',
-    lastMessageTime: '12:20 PM',
-    members: 5,
-    unreadCount: 0
-  },
-];
+type Chat = {
+  id: string;
+  name: string;
+  type: 'direct' | 'group';
+  lastMessage: string;
+  lastMessageTime: string;
+  memberCount?: number;
+  unreadCount: number;
+  participantId?: string;
+};
 
-const mockMessages = [
-  {
-    id: '1',
-    senderId: 'other',
-    senderName: 'Mike Johnson',
-    message: 'Hey, are you coming to the game tonight?',
-    timestamp: '6:30 PM'
-  },
-  {
-    id: '2',
-    senderId: 'me',
-    senderName: 'You',
-    message: 'Yeah definitely! What time again?',
-    timestamp: '6:32 PM'
-  },
-  {
-    id: '3',
-    senderId: 'other',
-    senderName: 'Mike Johnson',
-    message: '7 PM at Central Park courts',
-    timestamp: '6:33 PM'
-  },
-];
+type ChatMessage = {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: string;
+};
+
+const CHATS_KEY = 'ballout_user_chats';
 
 export default function MessagesScreen() {
-  const [chats, setChats] = useState(initialChats);
-  const [selectedChat, setSelectedChat] = useState(null);
-  const [messages, setMessages] = useState(mockMessages);
+  const { user } = useAuth();
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [showNewGroupModal, setShowNewGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  const [reportTarget, setReportTarget] = useState<{ id: string; label: string } | null>(null);
 
-  const handleChatSelect = (chat) => {
-    setSelectedChat(chat);
-    // Mark as read
-    setChats(prev => prev.map(c => 
-      c.id === chat.id ? { ...c, unreadCount: 0 } : c
-    ));
+  useEffect(() => {
+    loadChats();
+  }, [user?.id]);
+
+  const loadChats = async () => {
+    try {
+      const raw = await AsyncStorage.getItem(CHATS_KEY);
+      const stored: Chat[] = raw ? JSON.parse(raw) : [];
+      if (!user) {
+        setChats(stored);
+        return;
+      }
+      const hidden = await SafetyService.getHiddenUserIds(user.id);
+      setChats(
+        stored.filter((c) => !c.participantId || !hidden.includes(c.participantId))
+      );
+    } catch {
+      setChats([]);
+    }
   };
 
-  const handleSendMessage = () => {
-    if (!newMessage.trim() || !selectedChat) return;
+  const persistChats = async (next: Chat[]) => {
+    setChats(next);
+    await AsyncStorage.setItem(CHATS_KEY, JSON.stringify(next));
+  };
 
-    const message = {
+  const openChat = (chat: Chat) => {
+    setSelectedChat(chat);
+    setMessages([]);
+    setChats((prev) =>
+      prev.map((c) => (c.id === chat.id ? { ...c, unreadCount: 0 } : c))
+    );
+  };
+
+  const sendMessage = async () => {
+    if (!newMessage.trim() || !selectedChat || !user) return;
+
+    const message: ChatMessage = {
       id: Date.now().toString(),
-      senderId: 'me',
+      senderId: user.id,
       senderName: 'You',
-      message: newMessage.trim(),
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      text: newMessage.trim(),
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
-    setMessages(prev => [...prev, message]);
+    setMessages((prev) => [...prev, message]);
+    const text = newMessage.trim();
     setNewMessage('');
 
-    // Update last message in chat list
-    setChats(prev => prev.map(c => 
-      c.id === selectedChat.id 
-        ? { ...c, lastMessage: newMessage.trim(), lastMessageTime: 'now' }
-        : c
-    ));
+    await persistChats(
+      chats.map((c) =>
+        c.id === selectedChat.id
+          ? { ...c, lastMessage: text, lastMessageTime: 'now' }
+          : c
+      )
+    );
   };
 
-  const handleCreateGroup = () => {
+  const createGroup = async () => {
     if (!newGroupName.trim()) {
       Alert.alert('Error', 'Please enter a group name');
       return;
     }
 
-    const newGroup = {
+    const group: Chat = {
       id: Date.now().toString(),
       name: newGroupName.trim(),
       type: 'group',
       lastMessage: 'Group created',
       lastMessageTime: 'now',
-      members: 1,
-      unreadCount: 0
+      memberCount: 1,
+      unreadCount: 0,
     };
 
-    setChats(prev => [newGroup, ...prev]);
+    await persistChats([group, ...chats]);
     setNewGroupName('');
     setShowNewGroupModal(false);
-    Alert.alert('Success', 'Group chat created!');
   };
 
-  const renderChatItem = ({ item }) => (
-    <TouchableOpacity
-      style={[styles.chatItem, item.unreadCount > 0 && styles.unreadChat]}
-      onPress={() => handleChatSelect(item)}
-      activeOpacity={0.7}
-    >
-      <ThemedView style={styles.chatAvatar}>
-        <ThemedText style={styles.avatarText}>
-          {item.type === 'group' ? '👥' : '👤'}
-        </ThemedText>
-      </ThemedView>
-      
-      <ThemedView style={styles.chatInfo}>
-        <ThemedView style={styles.chatHeader}>
-          <ThemedText style={styles.chatName}>{item.name}</ThemedText>
-          <ThemedText style={styles.messageTime}>{item.lastMessageTime}</ThemedText>
-        </ThemedView>
-        
-        <ThemedView style={styles.chatPreview}>
-          <ThemedText style={styles.lastMessage} numberOfLines={1}>
-            {item.lastMessage}
-          </ThemedText>
-          {item.unreadCount > 0 && (
-            <ThemedView style={styles.unreadBadge}>
-              <ThemedText style={styles.unreadCount}>
-                {item.unreadCount}
-              </ThemedText>
-            </ThemedView>
-          )}
-        </ThemedView>
-        
-        {item.type === 'group' && (
-          <ThemedText style={styles.memberCount}>
-            {item.members} members
-          </ThemedText>
-        )}
-      </ThemedView>
-    </TouchableOpacity>
-  );
+  const blockFromChat = () => {
+    if (!user || !selectedChat?.participantId) {
+      Alert.alert(
+        'Block unavailable',
+        'Blocking is available for direct conversations with other players.'
+      );
+      return;
+    }
 
-  const renderMessage = ({ item }) => (
-    <ThemedView style={[
-      styles.messageContainer,
-      item.senderId === 'me' ? styles.myMessage : styles.otherMessage
-    ]}>
-      {item.senderId !== 'me' && selectedChat?.type === 'group' && (
-        <ThemedText style={styles.senderName}>{item.senderName}</ThemedText>
-      )}
-      <ThemedText style={[
-        styles.messageText,
-        item.senderId === 'me' ? styles.myMessageText : styles.otherMessageText
-      ]}>
-        {item.message}
-      </ThemedText>
-      <ThemedText style={styles.messageTime}>{item.timestamp}</ThemedText>
-    </ThemedView>
-  );
+    Alert.alert('Block user', `Block ${selectedChat.name}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Block',
+        style: 'destructive',
+        onPress: async () => {
+          await SafetyService.blockUser(
+            user.id,
+            selectedChat.participantId!,
+            selectedChat.name
+          );
+          setSelectedChat(null);
+          await loadChats();
+        },
+      },
+    ]);
+  };
 
   if (selectedChat) {
     return (
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 20}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <ThemedView style={styles.container}>
-          {/* Chat Header */}
-          <LinearGradient
-            colors={['#1A1A2E', '#16213E', '#0F4C75']}
-            style={styles.chatHeader}
-          >
-            <TouchableOpacity 
-              style={styles.backButton}
-              onPress={() => setSelectedChat(null)}
-            >
-              <ThemedText style={styles.backText}>← Back</ThemedText>
-            </TouchableOpacity>
-            
-            <ThemedView style={styles.chatHeaderInfo}>
-              <ThemedText style={styles.chatHeaderName}>{selectedChat.name}</ThemedText>
-              {selectedChat.type === 'group' && (
-                <ThemedText style={styles.chatHeaderSubtitle}>
-                  {selectedChat.members} members
-                </ThemedText>
-              )}
-            </ThemedView>
-          </LinearGradient>
-
-          {/* Messages */}
-          <FlatList
-            data={messages}
-            renderItem={renderMessage}
-            keyExtractor={item => item.id}
-            style={styles.messagesList}
-            contentContainerStyle={styles.messagesContent}
-            keyboardShouldPersistTaps="handled"
-          />
-
-          {/* Message Input */}
-          <ThemedView style={styles.messageInputContainer}>
-            <TextInput
-              style={styles.messageInput}
-              value={newMessage}
-              onChangeText={setNewMessage}
-              placeholder="Type a message..."
-              placeholderTextColor="#666"
-              multiline
-              blurOnSubmit={false}
-              returnKeyType="send"
-              onSubmitEditing={handleSendMessage}
-            />
+        <LinearGradient colors={['#1A1A2E', '#16213E']} style={styles.chatHeader}>
+          <TouchableOpacity onPress={() => setSelectedChat(null)}>
+            <ThemedText style={styles.backText}>← Back</ThemedText>
+          </TouchableOpacity>
+          <ThemedText style={styles.chatTitle}>{selectedChat.name}</ThemedText>
+          <View style={styles.chatHeaderActions}>
             <TouchableOpacity
-              style={styles.sendButton}
-              onPress={handleSendMessage}
+              onPress={() =>
+                setReportTarget({
+                  id: selectedChat.participantId || selectedChat.id,
+                  label: selectedChat.name,
+                })
+              }
             >
-              <LinearGradient
-                colors={['#0F4C75', '#3282B8']}
-                style={styles.sendButtonGradient}
-              >
-                <ThemedText style={styles.sendButtonText}>Send</ThemedText>
-              </LinearGradient>
+              <ThemedText style={styles.headerAction}>Report</ThemedText>
             </TouchableOpacity>
-          </ThemedView>
-        </ThemedView>
+            {selectedChat.type === 'direct' && (
+              <TouchableOpacity onPress={blockFromChat}>
+                <ThemedText style={styles.headerAction}>Block</ThemedText>
+              </TouchableOpacity>
+            )}
+          </View>
+        </LinearGradient>
+
+        <FlatList
+          data={messages}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.messagesList}
+          ListEmptyComponent={
+            <ThemedText style={styles.emptyThread}>
+              No messages yet. Start the conversation.
+            </ThemedText>
+          }
+          renderItem={({ item }) => (
+            <View
+              style={[
+                styles.messageBubble,
+                item.senderId === user?.id ? styles.myMessage : styles.theirMessage,
+              ]}
+            >
+              <ThemedText style={styles.messageText}>{item.text}</ThemedText>
+              <ThemedText style={styles.messageTime}>{item.timestamp}</ThemedText>
+            </View>
+          )}
+        />
+
+        <View style={styles.inputRow}>
+          <TextInput
+            style={styles.messageInput}
+            value={newMessage}
+            onChangeText={setNewMessage}
+            placeholder="Type a message..."
+            placeholderTextColor="#888"
+          />
+          <TouchableOpacity style={styles.sendButton} onPress={sendMessage}>
+            <ThemedText style={styles.sendText}>Send</ThemedText>
+          </TouchableOpacity>
+        </View>
+
+        <ReportModal
+          visible={!!reportTarget}
+          onClose={() => setReportTarget(null)}
+          targetType={selectedChat.type === 'direct' ? 'user' : 'message'}
+          targetId={reportTarget?.id || ''}
+          targetLabel={reportTarget?.label || ''}
+        />
       </KeyboardAvoidingView>
     );
   }
 
   return (
     <ThemedView style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={['#1A1A2E', '#16213E', '#0F4C75']}
-        style={styles.header}
-      >
+      <LinearGradient colors={['#1A1A2E', '#16213E', '#0F4C75']} style={styles.header}>
+        <ThemedText style={styles.headerEmoji}>💬</ThemedText>
         <ThemedText style={styles.headerTitle}>Messages</ThemedText>
+        <ThemedText style={styles.headerSubtitle}>Chat with players and groups</ThemedText>
         <TouchableOpacity
           style={styles.newGroupButton}
           onPress={() => setShowNewGroupModal(true)}
         >
-          <ThemedText style={styles.newGroupButtonText}>+ Group</ThemedText>
+          <ThemedText style={styles.newGroupButtonText}>+ New Group</ThemedText>
         </TouchableOpacity>
       </LinearGradient>
 
-      {/* Chat List */}
-      <FlatList
-        data={chats}
-        renderItem={renderChatItem}
-        keyExtractor={item => item.id}
-        style={styles.chatList}
-        showsVerticalScrollIndicator={false}
-      />
+      <ScrollView style={styles.content}>
+        {chats.length === 0 ? (
+          <View style={styles.emptyState}>
+            <ThemedText style={styles.emptyEmoji}>🏀</ThemedText>
+            <ThemedText style={styles.emptyTitle}>No conversations yet</ThemedText>
+            <ThemedText style={styles.emptyText}>
+              Create a group or message friends to get started. Demo chats were removed so App
+              Reviewers only see real user content.
+            </ThemedText>
+          </View>
+        ) : (
+          chats.map((chat) => (
+            <TouchableOpacity
+              key={chat.id}
+              style={styles.chatRow}
+              onPress={() => openChat(chat)}
+            >
+              <View style={styles.chatInfo}>
+                <ThemedText style={styles.chatName}>{chat.name}</ThemedText>
+                <ThemedText style={styles.chatPreview} numberOfLines={1}>
+                  {chat.lastMessage}
+                </ThemedText>
+              </View>
+              <ThemedText style={styles.chatTime}>{chat.lastMessageTime}</ThemedText>
+            </TouchableOpacity>
+          ))
+        )}
+      </ScrollView>
 
-      {/* New Group Modal */}
       {showNewGroupModal && (
-        <ThemedView style={styles.modalOverlay}>
-          <ThemedView style={styles.modal}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
             <ThemedText style={styles.modalTitle}>Create Group Chat</ThemedText>
-            
             <TextInput
-              style={styles.groupNameInput}
+              style={styles.modalInput}
               value={newGroupName}
               onChangeText={setNewGroupName}
-              placeholder="Enter group name"
-              placeholderTextColor="#666"
+              placeholder="Group name"
+              placeholderTextColor="#888"
             />
-            
-            <ThemedView style={styles.modalButtons}>
+            <View style={styles.modalActions}>
               <TouchableOpacity
-                style={styles.modalButton}
-                onPress={() => setShowNewGroupModal(false)}
+                style={styles.modalCancel}
+                onPress={() => {
+                  setShowNewGroupModal(false);
+                  setNewGroupName('');
+                }}
               >
-                <ThemedText style={styles.modalButtonText}>Cancel</ThemedText>
+                <ThemedText style={styles.modalCancelText}>Cancel</ThemedText>
               </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={[styles.modalButton, styles.createButton]}
-                onPress={handleCreateGroup}
-              >
-                <LinearGradient
-                  colors={['#0F4C75', '#3282B8']}
-                  style={styles.createButtonGradient}
-                >
-                  <ThemedText style={styles.createButtonText}>Create</ThemedText>
-                </LinearGradient>
+              <TouchableOpacity style={styles.modalCreate} onPress={createGroup}>
+                <ThemedText style={styles.modalCreateText}>Create</ThemedText>
               </TouchableOpacity>
-            </ThemedView>
-          </ThemedView>
-        </ThemedView>
+            </View>
+          </View>
+        </View>
       )}
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0A0A0A',
-  },
+  container: { flex: 1, backgroundColor: '#0A0A0A' },
   header: {
     paddingTop: 60,
-    paddingBottom: 20,
+    paddingBottom: 24,
     paddingHorizontal: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
   },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: 'white',
-  },
+  headerEmoji: { fontSize: 36, marginBottom: 8 },
+  headerTitle: { color: '#fff', fontSize: 28, fontWeight: 'bold' },
+  headerSubtitle: { color: 'rgba(255,255,255,0.8)', marginTop: 4 },
   newGroupButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    marginTop: 16,
+    backgroundColor: '#FF6B35',
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 20,
   },
-  newGroupButtonText: {
-    color: 'white',
-    fontWeight: '600',
-  },
-  chatList: {
-    flex: 1,
-  },
-  chatItem: {
-    flexDirection: 'row',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#2A2A2A',
-  },
-  unreadChat: {
-    backgroundColor: '#1A1A2E',
-  },
-  chatAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#2A2A2A',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  avatarText: {
-    fontSize: 20,
-  },
-  chatInfo: {
-    flex: 1,
-  },
-  chatHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  chatName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: 'white',
-  },
-  messageTime: {
-    fontSize: 12,
-    color: '#666',
-  },
-  chatPreview: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  lastMessage: {
-    flex: 1,
-    fontSize: 14,
-    color: '#999',
-    marginRight: 8,
-  },
-  unreadBadge: {
-    backgroundColor: '#4A90E2',
+  newGroupButtonText: { color: '#fff', fontWeight: '700' },
+  content: { flex: 1, padding: 16 },
+  emptyState: { alignItems: 'center', marginTop: 60, paddingHorizontal: 24 },
+  emptyEmoji: { fontSize: 48, marginBottom: 12 },
+  emptyTitle: { color: '#fff', fontSize: 20, fontWeight: '700', marginBottom: 8 },
+  emptyText: { color: '#aaa', textAlign: 'center', lineHeight: 20 },
+  chatRow: {
+    backgroundColor: '#1A1A1A',
     borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    minWidth: 24,
-    alignItems: 'center',
-  },
-  unreadCount: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  memberCount: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 2,
-  },
-  chatHeader: {
-    paddingTop: 60,
-    paddingBottom: 20,
-    paddingHorizontal: 20,
+    padding: 16,
+    marginBottom: 10,
     flexDirection: 'row',
     alignItems: 'center',
   },
-  backButton: {
-    marginRight: 16,
+  chatInfo: { flex: 1 },
+  chatName: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  chatPreview: { color: '#999', marginTop: 4 },
+  chatTime: { color: '#777', fontSize: 12 },
+  chatHeader: {
+    paddingTop: 54,
+    paddingBottom: 16,
+    paddingHorizontal: 16,
   },
-  backText: {
-    color: 'white',
-    fontSize: 16,
-  },
-  chatHeaderInfo: {
-    flex: 1,
-  },
-  chatHeaderName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  chatHeaderSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.7)',
-  },
-  messagesList: {
-    flex: 1,
-    backgroundColor: '#0A0A0A',
-  },
-  messagesContent: {
-    padding: 16,
-  },
-  messageContainer: {
-    marginVertical: 4,
+  backText: { color: '#FF6B35', marginBottom: 8 },
+  chatTitle: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  chatHeaderActions: { flexDirection: 'row', gap: 16, marginTop: 10 },
+  headerAction: { color: '#FF8A65', fontWeight: '600' },
+  messagesList: { padding: 16, flexGrow: 1 },
+  emptyThread: { color: '#888', textAlign: 'center', marginTop: 40 },
+  messageBubble: {
     maxWidth: '80%',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
   },
   myMessage: {
     alignSelf: 'flex-end',
-    backgroundColor: '#0F4C75',
-    borderRadius: 18,
-    borderBottomRightRadius: 4,
-    padding: 12,
+    backgroundColor: '#FF6B35',
   },
-  otherMessage: {
+  theirMessage: {
     alignSelf: 'flex-start',
     backgroundColor: '#2A2A2A',
-    borderRadius: 18,
-    borderBottomLeftRadius: 4,
-    padding: 12,
   },
-  senderName: {
-    fontSize: 12,
-    color: '#4A90E2',
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  messageText: {
-    fontSize: 16,
-    lineHeight: 20,
-  },
-  myMessageText: {
-    color: 'white',
-  },
-  otherMessageText: {
-    color: 'white',
-  },
-  messageInputContainer: {
+  messageText: { color: '#fff' },
+  messageTime: { color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 4 },
+  inputRow: {
     flexDirection: 'row',
-    padding: 16,
-    backgroundColor: '#1A1A1A',
-    alignItems: 'flex-end',
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#222',
+    gap: 8,
   },
   messageInput: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: '#2A2A2A',
+    backgroundColor: '#1F1F1F',
     borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginRight: 12,
-    color: 'white',
-    backgroundColor: '#2A2A2A',
-    maxHeight: 100,
-    minHeight: 44,
-    textAlignVertical: 'top',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: '#fff',
   },
   sendButton: {
+    backgroundColor: '#FF6B35',
     borderRadius: 20,
-    overflow: 'hidden',
-  },
-  sendButtonGradient: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  sendButtonText: {
-    color: 'white',
-    fontWeight: '600',
-  },
-  modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 16,
     justifyContent: 'center',
-    alignItems: 'center',
   },
-  modal: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 20,
+  sendText: { color: '#fff', fontWeight: '700' },
+  modalOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
     padding: 24,
-    width: '80%',
-    maxWidth: 300,
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: 'white',
-    textAlign: 'center',
-    marginBottom: 20,
+  modalCard: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 16,
+    padding: 20,
   },
-  groupNameInput: {
-    borderWidth: 1,
-    borderColor: '#2A2A2A',
-    borderRadius: 12,
-    padding: 12,
-    color: 'white',
+  modalTitle: { color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 12 },
+  modalInput: {
     backgroundColor: '#2A2A2A',
-    marginBottom: 20,
+    borderRadius: 10,
+    padding: 12,
+    color: '#fff',
+    marginBottom: 16,
   },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  modalButton: {
+  modalActions: { flexDirection: 'row', gap: 10 },
+  modalCancel: {
     flex: 1,
-    marginHorizontal: 8,
-    paddingVertical: 12,
-    borderRadius: 12,
+    backgroundColor: '#333',
+    padding: 12,
+    borderRadius: 10,
     alignItems: 'center',
   },
-  modalButtonText: {
-    color: '#666',
-    fontWeight: '600',
-  },
-  createButton: {
-    overflow: 'hidden',
-  },
-  createButtonGradient: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
+  modalCancelText: { color: '#fff' },
+  modalCreate: {
+    flex: 1,
+    backgroundColor: '#FF6B35',
+    padding: 12,
+    borderRadius: 10,
     alignItems: 'center',
-    width: '100%',
   },
-  createButtonText: {
-    color: 'white',
-    fontWeight: '600',
-  },
+  modalCreateText: { color: '#fff', fontWeight: '700' },
 });
