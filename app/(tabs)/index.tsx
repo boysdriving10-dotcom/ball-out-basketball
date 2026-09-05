@@ -5,6 +5,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
+import { useAuth } from '@/contexts/AuthContext';
+import ReportModal from '@/components/ReportModal';
+import GameService, { GamePost } from '@/services/GameService';
 
 const { width } = Dimensions.get('window');
 
@@ -15,6 +18,7 @@ interface Game {
   time: string;
   players: string;
   organizer: string;
+  organizerId?: string;
   skillLevel: 'Beginner' | 'Intermediate' | 'Advanced';
   spotsLeft: number;
   totalSpots: number;
@@ -23,58 +27,57 @@ interface Game {
   distance?: number;
 }
 
-const MOCK_GAMES: Game[] = [
-  {
-    id: '1',
-    title: '3v3 Pickup Game',
-    location: 'Central Park Basketball Court',
-    time: '6:00 PM • Today',
-    players: '3/6 players',
-    organizer: 'Mike',
-    skillLevel: 'Intermediate',
-    spotsLeft: 3,
-    totalSpots: 6,
-    latitude: 40.7829,
-    longitude: -73.9654,
-  },
-  {
-    id: '2',
-    title: '5v5 Full Court',
-    location: 'Downtown Community Center',
-    time: '7:30 PM • Tomorrow',
-    players: '6/10 players',
-    organizer: 'Sarah',
-    skillLevel: 'Advanced',
-    spotsLeft: 4,
-    totalSpots: 10,
-    latitude: 40.7580,
-    longitude: -73.9855,
-  },
-  {
-    id: '3',
-    title: 'Beginner Friendly Game',
-    location: 'Westside Recreation Center',
-    time: '5:00 PM • Saturday',
-    players: '4/8 players',
-    organizer: 'Alex',
-    skillLevel: 'Beginner',
-    spotsLeft: 4,
-    totalSpots: 8,
-    latitude: 40.7505,
-    longitude: -74.0015,
-  },
-];
+const MOCK_GAMES: Game[] = []; // Demo fixtures removed for App Store review.
 
 export default function HomeScreen() {
   const [games, setGames] = useState<Game[]>(MOCK_GAMES);
   const [userLocation, setUserLocation] = useState<Location.LocationObject | null>(null);
   const [locationPermission, setLocationPermission] = useState<boolean>(false);
   const [joinedGameId, setJoinedGameId] = useState<string | null>(null);
+  const [reportTarget, setReportTarget] = useState<{ id: string; label: string } | null>(null);
+  const { user } = useAuth();
   const [dailyVerse, setDailyVerse] = useState<any>(null);
   const [servicesLoaded, setServicesLoaded] = useState<boolean>(false);
   const bounceAnim = useMemo(() => new Animated.Value(0), []);
   const insets = useSafeAreaInsets();
 
+
+
+  const mapGamePost = (g: GamePost, userLat?: number, userLon?: number): Game => {
+    const latitude = g.latitude ?? 0;
+    const longitude = g.longitude ?? 0;
+    const distance =
+      userLat != null && userLon != null && g.latitude != null && g.longitude != null
+        ? calculateDistance(userLat, userLon, latitude, longitude)
+        : undefined;
+    return {
+      id: g.id,
+      title: g.title,
+      location: g.location,
+      time: `${g.time} • ${g.date}`,
+      players: g.players,
+      organizer: g.organizer,
+      organizerId: g.organizerId,
+      skillLevel: g.skillLevel,
+      spotsLeft: g.spotsLeft,
+      totalSpots: g.totalSpots,
+      latitude,
+      longitude,
+      distance,
+    };
+  };
+
+  const loadGames = useCallback(async (coords?: { latitude: number; longitude: number }) => {
+    const posts = await GameService.getGames();
+    const mapped = posts.map((g) =>
+      mapGamePost(g, coords?.latitude, coords?.longitude)
+    );
+    if (coords) {
+      mapped.sort((a, b) => (a.distance || 0) - (b.distance || 0));
+    }
+    setGames(mapped);
+    return mapped;
+  }, []);
 
   // Calculate distance between two coordinates using Haversine formula
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -113,6 +116,10 @@ export default function HomeScreen() {
     return () => clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    loadGames();
+  }, [loadGames]);
+
   // Request location permission and get user location
   useEffect(() => {
     const getLocationPermission = async () => {
@@ -120,14 +127,14 @@ export default function HomeScreen() {
         // Check if we're on web platform first
         if (Platform.OS === 'web') {
           setLocationPermission(false);
-          setGames(MOCK_GAMES);
+          await loadGames();
           return;
         }
 
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
           setLocationPermission(false);
-          setGames(MOCK_GAMES);
+          await loadGames();
           return;
         }
 
@@ -140,18 +147,10 @@ export default function HomeScreen() {
           });
           setUserLocation(location);
 
-          // Calculate distances and sort games by proximity
-          const gamesWithDistances = MOCK_GAMES.map(game => ({
-            ...game,
-            distance: calculateDistance(
-              location.coords.latitude,
-              location.coords.longitude,
-              game.latitude,
-              game.longitude
-            )
-          })).sort((a, b) => (a.distance || 0) - (b.distance || 0));
-
-          setGames(gamesWithDistances);
+          const gamesWithDistances = await loadGames({
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          });
 
           // Initialize notification service lazily
           if (servicesLoaded) {
@@ -167,13 +166,13 @@ export default function HomeScreen() {
         } catch (locationError) {
           console.log('Failed to get current location:', locationError);
           setLocationPermission(false);
-          setGames(MOCK_GAMES);
+          await loadGames();
         }
 
       } catch (error) {
         console.log('Error with location services:', error);
         setLocationPermission(false);
-        setGames(MOCK_GAMES);
+        await loadGames();
       }
     };
 
@@ -349,6 +348,18 @@ export default function HomeScreen() {
           </ThemedText>
         </ThemedView>
 
+        {games.length === 0 ? (
+          <ThemedView style={{ alignItems: 'center', paddingVertical: 40, paddingHorizontal: 20 }}>
+            <ThemedText style={{ fontSize: 40, marginBottom: 8 }}>🏀</ThemedText>
+            <ThemedText style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 8 }}>
+              No games yet
+            </ThemedText>
+            <ThemedText style={{ color: '#aaa', textAlign: 'center', lineHeight: 20 }}>
+              Create a game from the Create tab to see it here. Sample games were removed for App Store review.
+            </ThemedText>
+          </ThemedView>
+        ) : null}
+
         {games.map((game, index) => (
           <ThemedView key={game.id} style={[styles.gameCard, { marginTop: index === 0 ? 16 : 12 }]}>
             {/* Card Header */}
@@ -441,6 +452,15 @@ export default function HomeScreen() {
                 </LinearGradient>
               </TouchableOpacity>
             )}
+
+            <TouchableOpacity
+              style={{ marginTop: 10, alignSelf: 'flex-end', paddingVertical: 6, paddingHorizontal: 10 }}
+              onPress={() => setReportTarget({ id: game.id, label: game.title })}
+            >
+              <ThemedText style={{ color: '#FF8A65', fontSize: 13, fontWeight: '600' }}>
+                Report Game
+              </ThemedText>
+            </TouchableOpacity>
           </ThemedView>
         ))}
 
@@ -475,6 +495,14 @@ export default function HomeScreen() {
         {/* Bottom padding */}
         <ThemedView style={{ height: 120 }} />
       </ScrollView>
+
+      <ReportModal
+        visible={!!reportTarget}
+        onClose={() => setReportTarget(null)}
+        targetType="game"
+        targetId={reportTarget?.id || ''}
+        targetLabel={reportTarget?.label || ''}
+      />
     </ThemedView>
   );
 }

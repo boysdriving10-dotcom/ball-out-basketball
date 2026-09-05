@@ -16,6 +16,9 @@ import * as ImagePicker from 'expo-image-picker';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useAuth } from '@/contexts/AuthContext';
+import { useRouter } from 'expo-router';
+import SafetyService from '@/services/SafetyService';
+import { Linking } from 'react-native';
 
 const { width } = Dimensions.get('window');
 
@@ -30,7 +33,8 @@ const BASKETBALL_POSITIONS = [
 ];
 
 export default function ProfileScreen() {
-  const { user, logout, updateProfile } = useAuth();
+  const { user, logout, updateProfile, deleteAccount } = useAuth();
+  const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
   const [highlightModalVisible, setHighlightModalVisible] = useState(false);
@@ -63,6 +67,62 @@ export default function ProfileScreen() {
         { text: 'Logout', onPress: logout, style: 'destructive' },
       ]
     );
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'This permanently deletes your BallOut account, profile, friend connections, and games you created on this device. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Confirm deletion',
+              'Are you absolutely sure you want to delete your account?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Yes, Delete Forever',
+                  style: 'destructive',
+                  onPress: async () => {
+                    const success = await deleteAccount();
+                    if (success) {
+                      Alert.alert('Account deleted', 'Your account has been deleted.');
+                    } else {
+                      Alert.alert('Error', 'Could not delete your account. Please try again or contact support.');
+                    }
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  };
+
+  const openSupport = async () => {
+    try {
+      await SafetyService.openSupportEmail(
+        'BallOut Support Request',
+        'Please describe your issue:\n\n'
+      );
+    } catch {
+      Alert.alert(
+        'Contact Support',
+        `Email us at ${SafetyService.getSupportEmail()}`,
+        [
+          { text: 'OK' },
+          {
+            text: 'Copy Email',
+            onPress: () => Linking.openURL(`mailto:${SafetyService.getSupportEmail()}`),
+          },
+        ]
+      );
+    }
   };
 
   const pickProfilePicture = async () => {
@@ -524,9 +584,48 @@ export default function ProfileScreen() {
           </ThemedView>
         </ThemedView>
 
+        {/* Settings & Safety */}
+        <ThemedView style={styles.infoCard}>
+          <ThemedText style={styles.sectionTitle}>⚙️ Settings & Safety</ThemedText>
+
+          <TouchableOpacity style={styles.settingsRow} onPress={openSupport}>
+            <ThemedText style={styles.settingsRowText}>Contact Support</ThemedText>
+            <ThemedText style={styles.settingsChevron}>›</ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.settingsRow} onPress={() => router.push('/support')}>
+            <ThemedText style={styles.settingsRowText}>Help Center</ThemedText>
+            <ThemedText style={styles.settingsChevron}>›</ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.settingsRow} onPress={() => router.push('/blocked-users')}>
+            <ThemedText style={styles.settingsRowText}>Blocked Users</ThemedText>
+            <ThemedText style={styles.settingsChevron}>›</ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.settingsRow} onPress={() => router.push('/moderation')}>
+            <ThemedText style={styles.settingsRowText}>Safety & Moderation</ThemedText>
+            <ThemedText style={styles.settingsChevron}>›</ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.settingsRow} onPress={() => router.push('/privacy')}>
+            <ThemedText style={styles.settingsRowText}>Privacy Policy</ThemedText>
+            <ThemedText style={styles.settingsChevron}>›</ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.settingsRow, styles.settingsRowLast]} onPress={() => router.push('/terms')}>
+            <ThemedText style={styles.settingsRowText}>Terms of Service</ThemedText>
+            <ThemedText style={styles.settingsChevron}>›</ThemedText>
+          </TouchableOpacity>
+        </ThemedView>
+
         {/* Logout Button */}
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <ThemedText style={styles.logoutButtonText}>🚪 Logout</ThemedText>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.deleteAccountButton} onPress={handleDeleteAccount}>
+          <ThemedText style={styles.deleteAccountButtonText}>Delete Account</ThemedText>
         </TouchableOpacity>
 
         <ThemedView style={{ height: 120 }} />
@@ -999,7 +1098,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: 'rgba(220, 20, 60, 0.3)',
   },
@@ -1007,5 +1106,39 @@ const styles = StyleSheet.create({
     color: '#DC143C',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  settingsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  settingsRowLast: {
+    borderBottomWidth: 0,
+  },
+  settingsRowText: {
+    color: '#fff',
+    fontSize: 16,
+  },
+  settingsChevron: {
+    color: '#888',
+    fontSize: 22,
+    fontWeight: '300',
+  },
+  deleteAccountButton: {
+    backgroundColor: 'transparent',
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(220, 20, 60, 0.5)',
+  },
+  deleteAccountButtonText: {
+    color: '#FF6B6B',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

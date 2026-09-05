@@ -10,7 +10,6 @@ import { useColorScheme } from '@/hooks/useColorScheme';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { ReputationProvider } from '@/contexts/ReputationContext';
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
@@ -35,8 +34,14 @@ export default function RootLayout() {
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
           <Stack>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="support" options={{ title: 'Support', presentation: 'modal' }} />
+            <Stack.Screen name="privacy" options={{ title: 'Privacy Policy', presentation: 'modal' }} />
+            <Stack.Screen name="terms" options={{ title: 'Terms of Service', presentation: 'modal' }} />
+            <Stack.Screen name="blocked-users" options={{ title: 'Blocked Users' }} />
+            <Stack.Screen name="moderation" options={{ title: 'Safety & Moderation' }} />
             <Stack.Screen name="+not-found" />
           </Stack>
+          <StatusBar style="auto" />
         </ThemeProvider>
       </ReputationProvider>
     </AuthProvider>
