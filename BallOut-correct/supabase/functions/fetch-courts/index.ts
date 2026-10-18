@@ -236,9 +236,11 @@ function wantsOverpassTinyDiag(body: unknown): boolean {
 const OVERPASS_DIAG_ENDPOINTS = [
   OVERPASS_ENDPOINTS[0],
   "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
 ] as const;
 
 function overpassDiagHostLabel(endpoint: string): string {
+  if (endpoint.includes("private.coffee")) return "private_coffee";
   if (endpoint.includes("kumi.systems")) return "kumi";
   return overpassHostLabel(endpoint);
 }
