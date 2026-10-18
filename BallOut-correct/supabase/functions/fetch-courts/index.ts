@@ -72,6 +72,12 @@ Deno.serve(async (request) => {
     return cors(json({ ok: false, error: "invalid_json" }, 400));
   }
 
+  // Temporary Dev-only probe: skip cache/court fetch when explicitly flagged.
+  if (wantsOverpassTinyDiag(body)) {
+    const result = await runOverpassTinyDiag();
+    return cors(json(result.body, result.status));
+  }
+
   const bbox = parseBBox(body);
   if (!bbox) {
     return cors(json({ ok: false, error: "invalid_bbox" }, 400));
@@ -215,6 +221,87 @@ function classifyOverpassHttpStatus(status: number): string {
   if (status === 429) return "overpass_rate_limited";
   if (status >= 500) return "overpass_busy";
   return "overpass_http_error";
+}
+
+/** Explicit boolean only — strings/1 do not enable the probe. */
+function wantsOverpassTinyDiag(body: unknown): boolean {
+  return (
+    !!body &&
+    typeof body === "object" &&
+    (body as Record<string, unknown>).overpassDiag === true
+  );
+}
+
+/**
+ * Temporary development probe: tiny Overpass QL against the first endpoint,
+ * using the same headers + `data=` encoding as fetchFromOverpass.
+ * Returns status/category only — never upstream bodies, secrets, or headers.
+ */
+async function runOverpassTinyDiag(): Promise<JsonResult> {
+  const endpoint = OVERPASS_ENDPOINTS[0];
+  const host = overpassHostLabel(endpoint);
+  const query = "[out:json][timeout:10];node(1);out;";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        Accept: "application/json",
+        "User-Agent": "BallOutBasketball/1.0 (fetch-courts edge cache)",
+      },
+      body: `data=${encodeURIComponent(query)}`,
+      signal: controller.signal,
+    });
+
+    // Drop upstream body without buffering it into the Edge response.
+    try {
+      await response.body?.cancel();
+    } catch {
+      // ignore cancel failures
+    }
+
+    if (response.ok) {
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          diagnostic: "overpass_tiny",
+          host,
+          httpStatus: response.status,
+        },
+      };
+    }
+
+    return {
+      status: 200,
+      body: {
+        ok: false,
+        diagnostic: "overpass_tiny",
+        host,
+        httpStatus: response.status,
+        error: classifyOverpassHttpStatus(response.status),
+      },
+    };
+  } catch (err) {
+    const error =
+      err instanceof Error && err.name === "AbortError"
+        ? "overpass_timeout"
+        : "overpass_network_error";
+    return {
+      status: 200,
+      body: {
+        ok: false,
+        diagnostic: "overpass_tiny",
+        host,
+        error,
+      },
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function fetchFromOverpass(
