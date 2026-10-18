@@ -232,14 +232,32 @@ function wantsOverpassTinyDiag(body: unknown): boolean {
   );
 }
 
+/** Temporary diag targets only — does not alter production OVERPASS_ENDPOINTS. */
+const OVERPASS_DIAG_ENDPOINTS = [
+  OVERPASS_ENDPOINTS[0],
+  "https://overpass.kumi.systems/api/interpreter",
+] as const;
+
+function overpassDiagHostLabel(endpoint: string): string {
+  if (endpoint.includes("kumi.systems")) return "kumi";
+  return overpassHostLabel(endpoint);
+}
+
+type OverpassTinyDiagAttempt = {
+  host: string;
+  httpStatus?: number;
+  error?: string;
+};
+
 /**
- * Temporary development probe: tiny Overpass QL against the first endpoint,
+ * Temporary development probe: tiny Overpass QL against each diag endpoint,
  * using the same headers + `data=` encoding as fetchFromOverpass.
- * Returns status/category only — never upstream bodies, secrets, or headers.
+ * Returns label/status/category only — never upstream bodies, secrets, or headers.
  */
-async function runOverpassTinyDiag(): Promise<JsonResult> {
-  const endpoint = OVERPASS_ENDPOINTS[0];
-  const host = overpassHostLabel(endpoint);
+async function probeOverpassTiny(
+  endpoint: string,
+): Promise<OverpassTinyDiagAttempt> {
+  const host = overpassDiagHostLabel(endpoint);
   const query = "[out:json][timeout:10];node(1);out;";
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
@@ -264,44 +282,42 @@ async function runOverpassTinyDiag(): Promise<JsonResult> {
     }
 
     if (response.ok) {
-      return {
-        status: 200,
-        body: {
-          ok: true,
-          diagnostic: "overpass_tiny",
-          host,
-          httpStatus: response.status,
-        },
-      };
+      return { host, httpStatus: response.status };
     }
 
     return {
-      status: 200,
-      body: {
-        ok: false,
-        diagnostic: "overpass_tiny",
-        host,
-        httpStatus: response.status,
-        error: classifyOverpassHttpStatus(response.status),
-      },
+      host,
+      httpStatus: response.status,
+      error: classifyOverpassHttpStatus(response.status),
     };
   } catch (err) {
-    const error =
-      err instanceof Error && err.name === "AbortError"
-        ? "overpass_timeout"
-        : "overpass_network_error";
     return {
-      status: 200,
-      body: {
-        ok: false,
-        diagnostic: "overpass_tiny",
-        host,
-        error,
-      },
+      host,
+      error:
+        err instanceof Error && err.name === "AbortError"
+          ? "overpass_timeout"
+          : "overpass_network_error",
     };
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function runOverpassTinyDiag(): Promise<JsonResult> {
+  const attempts: OverpassTinyDiagAttempt[] = [];
+  for (const endpoint of OVERPASS_DIAG_ENDPOINTS) {
+    attempts.push(await probeOverpassTiny(endpoint));
+  }
+
+  const anyOk = attempts.some((a) => a.httpStatus !== undefined && !a.error);
+  return {
+    status: 200,
+    body: {
+      ok: anyOk,
+      diagnostic: "overpass_tiny",
+      attempts,
+    },
+  };
 }
 
 async function fetchFromOverpass(
